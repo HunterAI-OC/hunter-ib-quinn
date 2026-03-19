@@ -12,32 +12,8 @@ import sys
 import asyncio
 import signal
 
-# Graceful shutdown handler
-shutdown_event = asyncio.Event()
-
-def signal_handler(sig, frame):
-    print("\nShutdown signal received...")
-    shutdown_event.set()
-
-# Register signal handlers
-if sys.platform != 'win32':
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-else:
-    # Windows: use a thread to detect Ctrl+C
-    import threading
-    import time
-    def win32_shutdown():
-        import msvcrt
-        while True:
-            if msvcrt.kbhit():
-                ch = msvcrt.getch()
-                if ch == b'\x03':  # Ctrl+C
-                    print("\nShutdown signal received...")
-                    shutdown_event.set()
-                    break
-            time.sleep(0.1)
-    threading.Thread(target=win32_shutdown, daemon=True).start()
+# Graceful shutdown handler - simple version
+import time
 import argparse
 
 # Must be set before importing zmq / asyncio loop creation on Windows
