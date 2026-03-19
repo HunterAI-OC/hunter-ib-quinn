@@ -137,11 +137,17 @@ class QuinnEngine:
     async def load_tickers(self):
         """Load tickers from config"""
         # Try multiple paths for cross-platform compatibility
+        # Relative to script, then common Windows paths
+        script_dir = Path(__file__).parent
         possible_paths = [
-            Path(__file__).parent.parent / 'tickers' / 'daily_tickers.json',
-            Path('/mnt/c/hunter/algo/tickers/daily_tickers.json'),
+            script_dir / 'tickers' / 'daily_tickers.json',
+            script_dir.parent / 'tickers' / 'daily_tickers.json',
+            Path('tickers/daily_tickers.json'),
+            Path('../tickers/daily_tickers.json'),
             Path('C:/hunter/algo/tickers/daily_tickers.json'),
             Path('C:\\hunter\\algo\\tickers\\daily_tickers.json'),
+            Path('C:/algo/tickers/daily_tickers.json'),
+            Path('C:\\algo\\tickers\\daily_tickers.json'),
         ]
         
         config_path = None
