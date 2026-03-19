@@ -428,4 +428,11 @@ if __name__ == "__main__":
     parser.add_argument("--test", action="store_true", help="Run in test mode")
     args = parser.parse_args()
     
+    # Handle Ctrl+C gracefully
+    def signal_handler(sig, frame):
+        print("\nCtrl+C received - shutting down...")
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
     asyncio.run(main())
