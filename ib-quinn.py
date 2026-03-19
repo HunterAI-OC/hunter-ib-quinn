@@ -136,8 +136,20 @@ class QuinnEngine:
     
     async def load_tickers(self):
         """Load tickers from config"""
-        config_path = Path("/mnt/c/hunter/algo/tickers/daily_tickers.json")
-        if config_path.exists():
+        # Try multiple paths for cross-platform compatibility
+        possible_paths = [
+            Path(__file__).parent.parent / 'tickers' / 'daily_tickers.json',
+            Path('/mnt/c/hunter/algo/tickers/daily_tickers.json'),
+            Path('C:/hunter/algo/tickers/daily_tickers.json'),
+            Path('C:\\hunter\\algo\\tickers\\daily_tickers.json'),
+        ]
+        
+        config_path = None
+        for p in possible_paths:
+            if p.exists():
+                config_path = p
+                break
+        if config_path and config_path.exists():
             with open(config_path) as f:
                 data = json.load(f)
                 if isinstance(data, list):
