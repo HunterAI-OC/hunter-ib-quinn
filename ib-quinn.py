@@ -26,6 +26,7 @@ if sys.platform != 'win32':
 else:
     # Windows: use a thread to detect Ctrl+C
     import threading
+    import time
     def win32_shutdown():
         import msvcrt
         while True:
