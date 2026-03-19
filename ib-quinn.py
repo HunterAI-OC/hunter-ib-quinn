@@ -10,6 +10,33 @@ Usage:
 
 import sys
 import asyncio
+import signal
+
+# Graceful shutdown handler
+shutdown_event = asyncio.Event()
+
+def signal_handler(sig, frame):
+    print("\nShutdown signal received...")
+    shutdown_event.set()
+
+# Register signal handlers
+if sys.platform != 'win32':
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+else:
+    # Windows: use a thread to detect Ctrl+C
+    import threading
+    def win32_shutdown():
+        import msvcrt
+        while True:
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+                if ch == b'\x03':  # Ctrl+C
+                    print("\nShutdown signal received...")
+                    shutdown_event.set()
+                    break
+            time.sleep(0.1)
+    threading.Thread(target=win32_shutdown, daemon=True).start()
 import argparse
 
 # Must be set before importing zmq / asyncio loop creation on Windows
@@ -389,16 +416,21 @@ async def main():
         format="%(asctime)s %(levelname)s - %(message)s"
     )
     logging.info("Starting ib-quinn.py - Options Intelligence Layer")
+    logging.info("Press Ctrl+C to stop...")
     
     ctx = zmq.asyncio.Context()
     quinn = QuinnEngine(ctx)
     
     try:
-        await quinn.run()
+        # Run with a task that can be cancelled
+        await asyncio.wait_for(quinn.run(), timeout=None)
     except KeyboardInterrupt:
+        logging.info("Shutting down...")
+    except asyncio.CancelledError:
         logging.info("Shutting down...")
     finally:
         ctx.term()
+        logging.info("Quinn stopped.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ib-quinn Options Intelligence")
