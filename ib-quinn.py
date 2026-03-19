@@ -11,6 +11,11 @@ Usage:
 import sys
 import asyncio
 import argparse
+
+# Must be set before importing zmq / asyncio loop creation on Windows
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import logging
 import json
 import time
