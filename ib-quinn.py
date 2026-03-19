@@ -398,6 +398,20 @@ async def main():
     ctx = zmq.asyncio.Context()
     quinn = QuinnEngine(ctx)
     
+    # Handle Ctrl+C gracefully
+    loop = asyncio.get_event_loop()
+    stop_event = asyncio.Event()
+    
+    def signal_handler(sig):
+        logging.info("Ctrl+C received - shutting down...")
+        stop_event.set()
+    
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, lambda: signal_handler(sig))
+        except NotImplementedError:
+            pass  # Windows doesn't support add_signal_handler for SIGTERM
+    
     try:
         # Run with a task that can be cancelled
         await asyncio.wait_for(quinn.run(), timeout=None)
