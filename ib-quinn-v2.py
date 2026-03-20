@@ -190,44 +190,44 @@ class QuinnEngine:
         """
         Fetch option chain from bridge.
         Q-2 fix: bridge now sends both 'chain' and 'strikes' keys.
-        We use 'chain' (matches ib_async Option-style dicts from bridge).
         """
         try:
             await self.options_req.send_json({"ticker": symbol})
             response = await self.options_req.recv_json()
-
-            if response.get("status") != "ok":
-                logging.warning(f"Chain request failed for {symbol}: {response}")
-                return []
-
-            options = []
-            # Q-2 fix: use "chain" key (bridge sends both chain + strikes)
-            for opt_data in response.get("chain", []):
-                try:
-                    option = Option(
-                        symbol=symbol,
-                        strike=int(opt_data.get("strike", 0)),
-                        expiry=str(opt_data.get("expiry", "")),
-                        right=opt_data.get("right", "CALL"),
-                        bid=float(opt_data.get("bid", 0)),
-                        ask=float(opt_data.get("ask", 0)),
-                        delta=float(opt_data.get("delta", 0.5)),
-                        gamma=float(opt_data.get("gamma", 0)),
-                        theta=float(opt_data.get("theta", 0)),
-                        vega=float(opt_data.get("vega", 0)),
-                        iv=float(opt_data.get("iv", 30)),
-                        oi=int(opt_data.get("oi", 0)),
-                        volume=int(opt_data.get("volume", 0)),
-                    )
-                    options.append(option)
-                except Exception as e:
-                    logging.warning(f"Failed to parse option data for {symbol}: {e}")
-
-            return options
-
+        except asyncio.CancelledError:
+            logging.warning(f"Chain request cancelled for {symbol} -- retrying next cycle")
+            return []
         except Exception as e:
             logging.error(f"Error fetching chain for {symbol}: {e}")
             return []
+
+        if response.get("status") != "ok":
+            logging.warning(f"Chain request failed for {symbol}: {response}")
+            return []
+
+        options = []
+        for opt_data in response.get("chain", []):
+            try:
+                option = Option(
+                    symbol=symbol,
+                    strike=int(opt_data.get("strike", 0)),
+                    expiry=str(opt_data.get("expiry", "")),
+                    right=opt_data.get("right", "CALL"),
+                    bid=float(opt_data.get("bid", 0)),
+                    ask=float(opt_data.get("ask", 0)),
+                    delta=float(opt_data.get("delta", 0.5)),
+                    gamma=float(opt_data.get("gamma", 0)),
+                    theta=float(opt_data.get("theta", 0)),
+                    vega=float(opt_data.get("vega", 0)),
+                    iv=float(opt_data.get("iv", 30)),
+                    oi=int(opt_data.get("oi", 0)),
+                    volume=int(opt_data.get("volume", 0)),
+                )
+                options.append(option)
+            except Exception as e:
+                logging.warning(f"Failed to parse option data for {symbol}: {e}")
+
+        return options
 
     # ------------------------------------------------------------------
     # Option ranking
@@ -381,6 +381,8 @@ class QuinnEngine:
 
                 await self.recommendation_rep.send_json(response)
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logging.error(f"Error handling request: {e}", exc_info=True)
                 try:
@@ -415,8 +417,8 @@ class QuinnEngine:
                 if price:
                     self.current_prices[sym] = price
 
-            except zmq.Again:
-                pass
+            except (zmq.Again, asyncio.CancelledError):
+                pass   # timeout (normal) or task cancelled during shutdown
             except Exception as e:
                 logging.warning(f"Error processing tick: {e}")
 
