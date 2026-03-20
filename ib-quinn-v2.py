@@ -450,12 +450,12 @@ async def main() -> None:
     ctx = zmq.asyncio.Context()
     quinn = QuinnEngine(ctx)
 
-    loop = asyncio.get_event_loop()
-    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     def signal_handler(sig):
-        logging.info("Ctrl+C -- shutting down...")
-        stop_event.set()
+        logging.info(f"Signal {sig} received -- cancelling tasks...")
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -466,7 +466,7 @@ async def main() -> None:
     try:
         await quinn.run()
     except asyncio.CancelledError:
-        logging.info("Cancelled -- shutting down")
+        logging.info("Tasks cancelled -- shutting down")
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt -- shutting down")
     finally:
@@ -478,11 +478,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ib-quinn Options Intelligence v2")
     parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
-
-    def signal_handler(sig, frame):
-        print("\nCtrl+C -- shutting down...")
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
 
     asyncio.run(main())
