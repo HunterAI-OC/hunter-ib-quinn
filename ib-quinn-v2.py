@@ -453,9 +453,8 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
 
     def signal_handler(sig):
-        logging.info(f"Signal {sig} received -- cancelling tasks...")
-        for task in asyncio.all_tasks(loop):
-            task.cancel()
+        logging.info(f"Signal {sig} received -- stopping event loop")
+        loop.stop()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -465,10 +464,8 @@ async def main() -> None:
 
     try:
         await quinn.run()
-    except asyncio.CancelledError:
-        logging.info("Tasks cancelled -- shutting down")
-    except KeyboardInterrupt:
-        logging.info("KeyboardInterrupt -- shutting down")
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        logging.info("Shutting down")
     finally:
         ctx.term()
         logging.info("Quinn stopped.")
