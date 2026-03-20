@@ -456,6 +456,17 @@ async def main() -> None:
         logging.info(f"Signal {sig} received -- stopping event loop")
         loop.call_soon_threadsafe(loop.stop)
 
+    # Suppress pyzmq bug: ctx.term() cancels a pending recv and ZMQ's internal
+    # _AsyncSocket._deserialize._chain callback re-raises CancelledError.
+    # This is cosmetic -- context terminates normally regardless.
+    def suppress_cancelled_error(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, asyncio.CancelledError):
+            return
+        loop.default_exception_handler(context)
+
+    loop.set_exception_handler(suppress_cancelled_error)
+
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
