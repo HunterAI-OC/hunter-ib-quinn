@@ -367,8 +367,6 @@ class QuinnEngine:
                     
             except Exception as e:
                 logging.warning(f"Error processing tick: {e}")
-                
-            await asyncio.sleep(0.1)
     
     async def run(self):
         """Main run loop"""
