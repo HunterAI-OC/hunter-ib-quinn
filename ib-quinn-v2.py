@@ -454,7 +454,7 @@ async def main() -> None:
 
     def signal_handler(sig):
         logging.info(f"Signal {sig} received -- stopping event loop")
-        loop.stop()
+        loop.call_soon_threadsafe(loop.stop)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
