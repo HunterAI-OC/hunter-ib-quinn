@@ -155,10 +155,9 @@ class QuinnEngine:
                 self.tick_sub.setsockopt(zmq.RCVTIMEO, 5000)
                 self.tick_sub.connect(f"tcp://{self.zmq_host}:{self.tick_port}")
                 tick_sub_ok = True
-            except Exception as e:
+            except Exception:
                 logging.warning(
-                    f"[bridge] Connection attempt {attempt}/{max_attempts} failed "
-                    f"(tick SUB): {e}"
+                    f"[bridge] Connection attempt {attempt}/5 failed — retrying in 5s"
                 )
 
             # ── Chain request socket ───────────────────────────────────
@@ -170,10 +169,9 @@ class QuinnEngine:
                         f"tcp://{self.zmq_host}:{self.chain_port}"
                     )
                     chain_req_ok = True
-                except Exception as e:
+                except Exception:
                     logging.warning(
-                        f"[bridge] Connection attempt {attempt}/{max_attempts} failed "
-                        f"(chain REQ): {e}"
+                        f"[bridge] Connection attempt {attempt}/5 failed — retrying in 5s"
                     )
 
             # ── Both succeeded ────────────────────────────────────────
@@ -198,8 +196,7 @@ class QuinnEngine:
             # ── Retry or give up ──────────────────────────────────────
             if attempt >= max_attempts:
                 logging.error(
-                    f"[bridge] Could not connect to bridge after "
-                    f"{max_attempts} attempts, exiting"
+                    "[bridge] Could not connect to bridge after 5 attempts — exiting"
                 )
                 sys.exit(1)
             await asyncio.sleep(retry_delay)
