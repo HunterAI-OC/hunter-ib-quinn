@@ -1,0 +1,30 @@
+# Byte-compiled
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs (generated at runtime)
+logs/
+*.log
+
+# Data
+data/
+parquet/
+
+# Environment secrets
+.env
+*.pem
+*.key
