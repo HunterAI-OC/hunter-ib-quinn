@@ -131,22 +131,78 @@ class QuinnEngine:
 
     # ── Connections ────────────────────────────────────────────────────────
 
-    async def connect_to_bridge(self) -> None:
-        """Subscribe to stock ticks (5555) and connect chain request socket (5556)."""
-        self.tick_sub = self.ctx.socket(zmq.SUB)
-        self.tick_sub.connect(f"tcp://{self.zmq_host}:{self.tick_port}")
+    async def connect_to_bridge_with_retry(
+        self, max_attempts: int = 5, retry_delay: float = 5.0
+    ) -> None:
+        """
+        Connect to bridge with retry loop.
 
-        self.options_req = self.ctx.socket(zmq.REQ)
-        self.options_req.setsockopt(zmq.RCVTIMEO, 5000)
-        self.options_req.connect(f"tcp://{self.zmq_host}:{self.chain_port}")
+        Attempt to connect to both ZMQ sockets (tick SUB + chain REQ).
+        On failure: WARNING log, wait retry_delay seconds, try again.
+        After max_attempts consecutive failures: ERROR log, exit process.
+        """
+        attempt = 0
 
-        for sym in self.tickers:
-            self.tick_sub.setsockopt(zmq.SUBSCRIBE, sym.encode())
+        while True:
+            attempt += 1
 
-        logging.info(
-            f"Connected to bridge -- tick SUB on {self.tick_port}, "
-            f"chain REQ on {self.chain_port}"
-        )
+            # ── Tick subscriber ──────────────────────────────────────
+            tick_sub_ok = False
+            chain_req_ok = False
+
+            try:
+                self.tick_sub = self.ctx.socket(zmq.SUB)
+                self.tick_sub.setsockopt(zmq.RCVTIMEO, 5000)
+                self.tick_sub.connect(f"tcp://{self.zmq_host}:{self.tick_port}")
+                tick_sub_ok = True
+            except Exception as e:
+                logging.warning(
+                    f"[bridge] Connection attempt {attempt}/{max_attempts} failed "
+                    f"(tick SUB): {e}"
+                )
+
+            # ── Chain request socket ───────────────────────────────────
+            if tick_sub_ok:
+                try:
+                    self.options_req = self.ctx.socket(zmq.REQ)
+                    self.options_req.setsockopt(zmq.RCVTIMEO, 5000)
+                    self.options_req.connect(
+                        f"tcp://{self.zmq_host}:{self.chain_port}"
+                    )
+                    chain_req_ok = True
+                except Exception as e:
+                    logging.warning(
+                        f"[bridge] Connection attempt {attempt}/{max_attempts} failed "
+                        f"(chain REQ): {e}"
+                    )
+
+            # ── Both succeeded ────────────────────────────────────────
+            if tick_sub_ok and chain_req_ok:
+                for sym in self.tickers:
+                    self.tick_sub.setsockopt(zmq.SUBSCRIBE, sym.encode())
+                logging.info(
+                    f"[bridge] Connected -- tick SUB on {self.tick_port}, "
+                    f"chain REQ on {self.chain_port}"
+                )
+                return
+
+            # ── Cleanup failed sockets before retry ───────────────────
+            if self.tick_sub:
+                try:
+                    self.tick_sub.close()
+                except Exception:
+                    pass
+                self.tick_sub = None
+            self.options_req = None
+
+            # ── Retry or give up ──────────────────────────────────────
+            if attempt >= max_attempts:
+                logging.error(
+                    f"[bridge] Could not connect to bridge after "
+                    f"{max_attempts} attempts, exiting"
+                )
+                sys.exit(1)
+            await asyncio.sleep(retry_delay)
 
     async def start_server(self) -> None:
         """Bind REP server on port 5560 for algo queries."""
@@ -515,7 +571,7 @@ class QuinnEngine:
         self._running = True
 
         self.load_tickers()
-        await self.connect_to_bridge()
+        await self.connect_to_bridge_with_retry()
         await self.start_server()
 
         await asyncio.gather(
