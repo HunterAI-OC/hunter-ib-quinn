@@ -23,7 +23,7 @@ import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass, asdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -127,6 +127,10 @@ class QuinnEngine:
         self.options_req: Optional[zmq.Socket]   = None
         self.recommendation_rep: Optional[zmq.Socket] = None
 
+        # Lock protects the ZMQ REQ socket from corruption if CancelledError
+        # fires between send_json and recv_json (lockstep REQ socket constraint)
+        self._req_lock: asyncio.Lock = asyncio.Lock()
+
         self._running = False
 
     # ── Connections ────────────────────────────────────────────────────────
@@ -202,10 +206,28 @@ class QuinnEngine:
             await asyncio.sleep(retry_delay)
 
     async def start_server(self) -> None:
-        """Bind REP server on port 5560 for algo queries."""
+        """Bind REP server on port 5560 for algo queries. RCVTIMEO=5s prevents
+        a hung client from blocking the socket forever."""
         self.recommendation_rep = self.ctx.socket(zmq.REP)
+        self.recommendation_rep.setsockopt(zmq.RCVTIMEO, 5000)  # 5s timeout
         self.recommendation_rep.bind(f"tcp://{self.zmq_host}:{self.rep_port}")
         logging.info(f"Quinn recommendation server bound on port {self.rep_port}")
+
+    def _close_options_req(self) -> None:
+        """Safely close the options REQ socket."""
+        if self.options_req is not None:
+            try:
+                self.options_req.close()
+            except Exception:
+                pass
+            self.options_req = None
+
+    def _create_options_req(self) -> None:
+        """Create a fresh options REQ socket."""
+        self._close_options_req()
+        self.options_req = self.ctx.socket(zmq.REQ)
+        self.options_req.setsockopt(zmq.RCVTIMEO, 5000)
+        self.options_req.connect(f"tcp://{self.zmq_host}:{self.chain_port}")
 
     # ── Ticker loading ─────────────────────────────────────────────────────
 
@@ -258,16 +280,30 @@ class QuinnEngine:
         """
         Fetch option chain for symbol from bridge via REQ on port 5556.
         Returns list of OptionContract objects.
+
+        The _req_lock ensures only one REQ operation runs at a time (ZMQ REQ is
+        lockstep — a second send before the prior recv reply would block forever).
+        If CancelledError fires during the operation, the socket is closed and
+        recreated so no corrupted state is left for the next request.
         """
-        try:
-            await self.options_req.send_json({"action": "chains", "symbol": symbol})
-            response = await self.options_req.recv_json()
-        except asyncio.CancelledError:
-            logging.warning(f"Chain request cancelled for {symbol}")
-            return []
-        except Exception as e:
-            logging.error(f"Failed to fetch chain for {symbol}: {e}")
-            return []
+        async with self._req_lock:
+            try:
+                await self.options_req.send_json(
+                    {"action": "chains", "symbol": symbol}
+                )
+                response = await self.options_req.recv_json()
+            except asyncio.CancelledError:
+                # Socket left in unfulfilled-request state — must close and
+                # recreate or every subsequent REQ call will hang forever.
+                logging.warning(
+                    f"[bridge] REQ socket cancelled for {symbol}, recreating socket"
+                )
+                self._close_options_req()
+                self._create_options_req()
+                return []
+            except Exception as e:
+                logging.error(f"Failed to fetch chain for {symbol}: {e}")
+                return []
 
         if response.get("status") != "ok":
             logging.warning(f"Chain request failed for {symbol}: {response}")
@@ -386,8 +422,9 @@ class QuinnEngine:
         for i, c in enumerate(filtered):
             c.rank = i + 1
 
+        rankings_symbol = filtered[0].symbol if filtered else ""
         return Rankings(
-            symbol=symbol if (symbol := filtered[0].symbol if filtered else "") else "",
+            symbol=rankings_symbol,
             direction=direction,
             stock_price=stock_price,
             timestamp=time.time(),
@@ -400,11 +437,26 @@ class QuinnEngine:
         """
         Periodically refresh all option chains and re-rank.
         SPEC-QUINN §4.2: Refresh every 60 seconds during market hours.
+        Fetches all chains in parallel via asyncio.gather for performance.
         """
         while self._running:
-            for symbol in self.tickers:
+            # Evict stale tickers — only keep tickers we still track
+            stale = set(self.current_prices.keys()) - set(self.tickers)
+            for s in stale:
+                del self.current_prices[s]
+
+            # Fetch all chains concurrently
+            chains = await asyncio.gather(
+                *[self.fetch_option_chain(sym) for sym in self.tickers],
+                return_exceptions=True,
+            )
+
+            for symbol, chain in zip(self.tickers, chains):
+                if isinstance(chain, Exception):
+                    logging.warning(f"Chain fetch failed for {symbol}: {chain}")
+                    continue
+
                 stock_price = self.current_prices.get(symbol, 0.0)
-                chain = await self.fetch_option_chain(symbol)
 
                 rankings_long  = self.rank_contracts(chain, "long",  stock_price)
                 rankings_short = self.rank_contracts(chain, "short", stock_price)
@@ -436,6 +488,8 @@ class QuinnEngine:
             try:
                 msg = await self.tick_sub.recv_string()
             except asyncio.CancelledError:
+                # Task is shutting down — exit cleanly. The gather in run() will
+                # cancel sibling tasks; this is the intended shutdown path.
                 break
             except Exception as e:
                 logging.warning(f"recv_string error: {e}")
@@ -469,6 +523,8 @@ class QuinnEngine:
             try:
                 msg = await self.recommendation_rep.recv_json()
             except asyncio.CancelledError:
+                # Task is shutting down — exit cleanly. The gather in run() will
+                # cancel sibling tasks; this is the intended shutdown path.
                 break
             except Exception as e:
                 logging.error(f"recv_json error: {e}")
@@ -575,6 +631,7 @@ class QuinnEngine:
             self.refresh_chains(),
             self.process_ticks(),
             self.handle_requests(),
+            return_exceptions=True,  # one task crashing shouldn't cancel the others
         )
 
 
@@ -591,7 +648,7 @@ def setup_logging(log_dir: Path, process_name: str = "quinn") -> None:
     log_dir = Path(log_dir) / process_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     log_path = log_dir / f"{process_name}_{timestamp}.log"
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
@@ -664,6 +721,7 @@ async def main_async(args: argparse.Namespace) -> None:
     def suppress_cancelled(loop_, context):
         exc = context.get("exception")
         if isinstance(exc, asyncio.CancelledError):
+            logging.debug("Suppressed CancelledError from event loop")
             return
         loop_.default_exception_handler(context)
 
