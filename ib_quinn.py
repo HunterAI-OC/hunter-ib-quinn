@@ -463,7 +463,11 @@ class QuinnEngine:
         """
         Handle algo recommendation queries on port 5560 (REP).
         Request:  {"action": "recommend", "symbol": "PLTR", "direction": "long"}
-        Response: SPEC-QUINN §5.1 full contract record.
+        Response: {"status": "ok", "symbol": "PLTR", "direction": "long",
+                    "strike": 25.0, "expiry": "20260330", "right": "CALL",
+                    "delta": 0.52, "gamma": 0.04, "theta": -0.08, "iv": 0.32,
+                    "bid": 2.15, "ask": 2.20, "underlying_price": 248.97}
+        Error:    {"status": "error", "message": "no_call_contracts_found"}
         """
         while self._running:
             try:
@@ -474,14 +478,13 @@ class QuinnEngine:
                 logging.error(f"recv_json error: {e}")
                 continue
 
-            t_request = time.time()
             action    = msg.get("action", "")
             symbol    = msg.get("symbol", "")
             direction = msg.get("direction", "long")
 
             if action != "recommend":
                 await self._send_error(
-                    f"unknown_action: '{action}'", symbol, direction, t_request
+                    f"unknown_action: '{action}'", symbol, direction
                 )
                 continue
 
@@ -491,55 +494,37 @@ class QuinnEngine:
             if not rankings or not rankings.contracts:
                 await self._send_error(
                     f"no_{'call' if direction == 'long' else 'put'}_contracts_found",
-                    symbol, direction, t_request,
+                    symbol, direction,
                 )
                 continue
 
             # Best contract
             best = rankings.contracts[0]
-            stock_price = rankings.stock_price or self.current_prices.get(symbol, 0.0)
-
-            # Moneyness
-            if best.right == "CALL":
-                moneyness = (
-                    "ITM" if stock_price > best.strike
-                    else "OTM" if stock_price < best.strike
-                    else "ATM"
-                )
-            else:
-                moneyness = (
-                    "ITM" if stock_price < best.strike
-                    else "OTM" if stock_price > best.strike
-                    else "ATM"
-                )
-
-            age_ms = int((time.time() - rankings.timestamp) * 1000)
+            underlying_price = (
+                rankings.stock_price
+                or self.current_prices.get(symbol, 0.0)
+            )
 
             response = {
-                "symbol":       symbol,
-                "direction":    direction,
-                "strike":       best.strike,
-                "expiry":       best.expiry,
-                "right":        best.right,
-                "delta":        best.delta,
-                "gamma":        best.gamma,
-                "theta":        best.theta,
-                "iv":           best.iv,
-                "bid":          best.bid,
-                "ask":          best.ask,
-                "mid":          best.mid,
-                "oi":           best.oi,
-                "volume":       best.volume,
-                "score":        round(best.score, 4),
-                "stock_price":  round(stock_price, 4),
-                "moneyness":    moneyness,
-                "rank":         best.rank,
-                "age_ms":       age_ms,
+                "status":           "ok",
+                "symbol":            symbol,
+                "direction":         direction,
+                "strike":            best.strike,
+                "expiry":            best.expiry,
+                "right":             best.right,
+                "delta":             best.delta,
+                "gamma":             best.gamma,
+                "theta":             best.theta,
+                "iv":                best.iv,
+                "bid":               best.bid,
+                "ask":               best.ask,
+                "underlying_price":  round(underlying_price, 4),
             }
 
             logging.info(
                 f"Served recommendation: {symbol} {direction} → "
-                f"${best.strike:.2f} {best.expiry} rank={best.rank} age={age_ms}ms"
+                f"${best.strike:.2f} {best.expiry} "
+                f"δ={best.delta:.2f} underlying=${underlying_price:.2f}"
             )
 
             try:
@@ -548,15 +533,14 @@ class QuinnEngine:
                 logging.error(f"Failed to send recommendation response: {e}")
 
     async def _send_error(
-        self, error: str, symbol: str, direction: str, t_request: float
+        self, message: str, symbol: str, direction: str
     ) -> None:
         """Send error response and log warning."""
-        logging.warning(f"Recommendation error for {symbol} {direction}: {error}")
+        logging.warning(f"Recommendation error for {symbol} {direction}: {message}")
         try:
             await self.recommendation_rep.send_json({
-                "error":      error,
-                "symbol":     symbol,
-                "direction":  direction,
+                "status":  "error",
+                "message": message,
             })
         except Exception as e:
             logging.error(f"Failed to send error response: {e}")
