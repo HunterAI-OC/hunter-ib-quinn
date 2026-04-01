@@ -122,14 +122,16 @@ class QuinnEngine:
         tick_port: int,
         chain_port: int,
         rep_port: int,
+        rep_host: str,
         log_dir: Path,
         refresh_interval: int = 60,  # kept for backwards compatibility (unused in burst mode)
     ):
         self.ctx        = ctx
-        self.zmq_host   = zmq_host
+        self.zmq_host   = zmq_host    # bridge connection host
         self.tick_port  = tick_port
         self.chain_port = chain_port
         self.rep_port   = rep_port
+        self.rep_host   = rep_host    # local bind for algo connection
         self.log_dir    = log_dir
 
         self.tickers: List[str]              = []
@@ -230,7 +232,7 @@ class QuinnEngine:
     async def start_server(self) -> None:
         """Bind REP server on port 5560 for algo queries."""
         self.recommendation_rep = self.ctx.socket(zmq.REP)
-        self.recommendation_rep.bind(f"tcp://{self.zmq_host}:{self.rep_port}")
+        self.recommendation_rep.bind(f"tcp://{self.rep_host}:{self.rep_port}")
         logging.info(
             f"Quinn recommendation server bound on port {self.rep_port}"
         )
@@ -955,6 +957,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chain-port", type=int, default=5556)
     parser.add_argument("--rep-port",   type=int, default=5560)
     parser.add_argument(
+        "--rep-host", default="127.0.0.1",
+        help="Host to bind REP server for algo (default 127.0.0.1)"
+    )
+    parser.add_argument(
         "--log-dir", default="C:/hunter/algo/logs", dest="log_dir"
     )
     return parser.parse_args()
@@ -970,6 +976,7 @@ async def main_async(args: argparse.Namespace) -> None:
         tick_port=args.tick_port,
         chain_port=args.chain_port,
         rep_port=args.rep_port,
+        rep_host=getattr(args, "rep_host", "127.0.0.1"),
         log_dir=Path(args.log_dir),
     )
 
