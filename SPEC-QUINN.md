@@ -241,3 +241,131 @@ All logs to `C:\hunter\algo\logs\quinn\quinn_YYYYMMDD_HHMMSS.log`.
 - Multiple symbol simultaneous queries
 - Greeks computation (use IBKR values directly)
 - Historical chain analysis
+
+---
+
+## 12. Burst Mode (Event-Driven)
+
+> **IMPORTANT:** Quinn is event-driven, NOT continuously running. This is the core operational model.
+
+### 12.1 Why Burst Mode?
+
+The 60-second continuous chain refresh is wasteful compute. Option data only matters when the algo has a live setup. Quinn should only work when needed.
+
+### 12.2 Candle Classification Terminology
+
+- **"Candle classification 3"** — the third pattern in the 3-1-2 strategy (energy expansion)
+- **"Candle classification 1"** — the consolidation bar in the 3-1-2 strategy (inside bar)
+- **"Candle classification 2"** — the trigger bar that breaks candle classification 1's range
+
+These are NOT price bars — they are candle classifications per the strat.
+
+### 12.3 Activation Sequence
+
+| Event | Algo Action | Quinn Action |
+|-------|-------------|--------------|
+| Candle classification 3 complete | Pattern detected | IDLE — doing nothing |
+| Candle classification 1 forming (last 10 seconds) | Sends `{"action": "activate", "symbol": "AAPL", "direction": "call"}` | **BURST MODE** — fetches chain + ranks every 1s |
+| Candle classification 2 breaks C1 high/low | Sends `{"action": "execute", "symbol": "AAPL", "direction": "call"}` | Returns best contract instantly |
+| Trade complete OR C1 closes without entry | Sends `{"action": "deactivate", "symbol": "AAPL"}` | IDLE — stops refreshing |
+
+### 12.4 Quinn States
+
+```
+IDLE ←─────────────────────→ BURST
+  ↑                            ↑
+  │ (activate)                │ (execute OR deactivate OR 60s timeout)
+  └────────────────────────────┘
+```
+
+- **IDLE:** Quinn running but NOT fetching chains. Only maintains price context from 5555 tick stream.
+- **BURST:** Quinn fetching chain + ranking every 1 second for the activated symbol.
+
+### 12.5 New Request Formats
+
+**Activate (algo → Quinn):**
+```json
+{"action": "activate", "symbol": "AAPL", "direction": "call"}
+```
+
+**Execute (algo → Quinn):**
+```json
+{"action": "execute", "symbol": "AAPL", "direction": "call"}
+```
+
+**Deactivate (algo → Quinn):**
+```json
+{"action": "deactivate", "symbol": "AAPL"}
+```
+
+**Execute Response (Quinn → algo):**
+```json
+{
+  "status": "ok",
+  "symbol": "AAPL",
+  "direction": "call",
+  "strike": 248,
+  "expiry": "20260330",
+  "right": "CALL",
+  "delta": 0.52,
+  "gamma": 0.04,
+  "theta": -0.08,
+  "iv": 0.32,
+  "bid": 2.15,
+  "ask": 2.20,
+  "underlying_price": 248.97
+}
+```
+
+### 12.6 Burst Timing
+
+- **Activation trigger:** 10 seconds before candle classification 1 closes
+- **Burst interval:** Fetch + rank every 1 second
+- **Execute response:** Return cached best (max 1 second old) — <10ms latency
+- **Timeout:** Exit burst mode after 60 seconds of no activation
+
+### 12.7 Benefits
+
+| Aspect | Continuous (old) | Burst (new) |
+|--------|------------------|-------------|
+| Activation | Always running | Only when algo activates |
+| Chain fetch | Every 60s always | Every 1s during setup only |
+| Compute | Continuous waste | Only during setup window |
+| Data freshness | 60s stale | Fresh at trade entry |
+
+---
+
+## 13. Bridge Greek Delivery
+
+For Quinn to rank by Greek profile, the bridge must deliver Greeks on port 5556.
+
+### 13.1 Bridge Response Format (5556)
+
+```json
+{
+  "symbol": "AAPL",
+  "expirations": ["20260330", "20260403"],
+  "strikes": [245, 246, 247, 248, 249, 250],
+  "contracts": [
+    {
+      "strike": 248,
+      "expiry": "20260330",
+      "right": "CALL",
+      "delta": 0.52,
+      "gamma": 0.04,
+      "theta": -0.08,
+      "iv": 0.32,
+      "bid": 2.15,
+      "ask": 2.20,
+      "oi": 5000,
+      "volume": 3000
+    }
+  ]
+}
+```
+
+### 13.2 Quinn's Role
+
+- Receive contracts array with Greek values from bridge
+- Hook delta/gamma/theta into the scoring algorithm
+- Rank by Greek profile (prefer higher gamma, lower theta for intraday)
