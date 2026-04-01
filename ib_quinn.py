@@ -27,7 +27,7 @@ import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass, asdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -122,8 +122,8 @@ class QuinnEngine:
         tick_port: int,
         chain_port: int,
         rep_port: int,
-        rep_host: str,
         log_dir: Path,
+        rep_host: str = "127.0.0.1",
         refresh_interval: int = 60,  # kept for backwards compatibility (unused in burst mode)
     ):
         self.ctx        = ctx
@@ -521,36 +521,49 @@ class QuinnEngine:
         """
         Fetch + rank every BURST_INTERVAL_SEC for the activated symbol.
         Cache the best contract. Runs while self._state == BURST.
+        Resilient to individual fetch failures — loop continues until deactivated.
         """
         symbol = self._burst_symbol
         direction = self._burst_direction
 
         while self._state == QuinnState.BURST:
-            stock_price = self.current_prices.get(symbol, 0.0)
+            try:
+                stock_price = self.current_prices.get(symbol, 0.0)
 
-            chain = await self.fetch_option_chain(symbol, greeks=True)
-            if chain:
-                rankings = self.rank_contracts(chain, direction, stock_price)
-                if rankings.contracts:
-                    self._cached_best = rankings.contracts[0]
-                    self.rankings[f"{symbol}|{direction}"] = rankings
-                    logging.info(
-                        f"[burst] {symbol} {direction} → "
-                        f"${self._cached_best.strike:.2f} "
-                        f"δ={self._cached_best.delta:.3f} "
-                        f"Γ={self._cached_best.gamma:.4f} "
-                        f"Θ={self._cached_best.theta:.4f} "
-                        f"score={self._cached_best.score:.3f}"
-                    )
+                chain = await self.fetch_option_chain(symbol, greeks=True)
+                if chain:
+                    rankings = self.rank_contracts(chain, direction, stock_price)
+                    if rankings.contracts:
+                        self._cached_best = rankings.contracts[0]
+                        self.rankings[f"{symbol}|{direction}"] = rankings
+                        logging.info(
+                            f"[burst] {symbol} {direction} → "
+                            f"${self._cached_best.strike:.2f} "
+                            f"delta={self._cached_best.delta:.3f} "
+                            f"gamma={self._cached_best.gamma:.4f} "
+                            f"theta={self._cached_best.theta:.4f} "
+                            f"score={self._cached_best.score:.3f}"
+                        )
+                    else:
+                        logging.warning(
+                            f"[burst] No qualifying contracts for {symbol}"
+                        )
+                        self._cached_best = None
                 else:
                     logging.warning(
-                        f"[burst] No qualifying contracts for {symbol}"
+                        f"[burst] Empty chain response for {symbol}"
                     )
                     self._cached_best = None
-            else:
-                logging.warning(
-                    f"[burst] Empty chain response for {symbol}"
+
+            except asyncio.CancelledError:
+                # Re-raise so _cancel_burst_tasks can handle it
+                raise
+            except Exception as e:
+                logging.error(
+                    f"[burst] Unhandled error in burst loop for {symbol}: {e}",
+                    exc_info=True,
                 )
+                # Continue looping — stay in BURST, retry next interval
                 self._cached_best = None
 
             await asyncio.sleep(BURST_INTERVAL_SEC)
@@ -578,6 +591,11 @@ class QuinnEngine:
         self._burst_direction = direction
         self._cached_best = None
 
+        # Evict all rankings except the one we're about to refresh
+        # to prevent unbounded dict growth over a trading session
+        active_key = f"{symbol}|{direction}"
+        self.rankings = {k: v for k, v in self.rankings.items() if k == active_key}
+
         # Start burst loop and timeout concurrently
         self._burst_task = asyncio.create_task(self._burst_loop())
         self._burst_timeout_task = asyncio.create_task(self._burst_timeout())
@@ -603,7 +621,9 @@ class QuinnEngine:
             try:
                 await self._burst_task
             except asyncio.CancelledError:
-                pass
+                logging.debug("[burst] Burst loop cancelled")
+            except Exception as e:
+                logging.warning(f"[burst] Unexpected error cancelling burst loop: {e}")
             self._burst_task = None
 
         if self._burst_timeout_task and not self._burst_timeout_task.done():
@@ -611,7 +631,9 @@ class QuinnEngine:
             try:
                 await self._burst_timeout_task
             except asyncio.CancelledError:
-                pass
+                logging.debug("[burst] Timeout task cancelled")
+            except Exception as e:
+                logging.warning(f"[burst] Unexpected error cancelling timeout: {e}")
             self._burst_timeout_task = None
 
     # ── Background tasks ───────────────────────────────────────────────────
@@ -738,15 +760,22 @@ class QuinnEngine:
                 try:
                     await self._burst_timeout_task
                 except asyncio.CancelledError:
-                    pass
+                    logging.debug(
+                        f"[burst] Timeout task cancelled during activate restart"
+                    )
+                except Exception as e:
+                    logging.warning(
+                        f"[burst] Unexpected error cancelling timeout: {e}"
+                    )
 
         await self._enter_burst(symbol, direction)
+        norm_direction = "call" if direction == "long" else "put"
 
         try:
             await self.recommendation_rep.send_json({
                 "status": "ok",
                 "symbol": symbol,
-                "direction": direction,
+                "direction": norm_direction,
                 "state": self._state.value,
             })
         except Exception as e:
@@ -771,7 +800,13 @@ class QuinnEngine:
             try:
                 await self._burst_timeout_task
             except asyncio.CancelledError:
-                pass
+                logging.debug(
+                    f"[burst] Timeout task cancelled during restart for {symbol}"
+                )
+            except Exception as e:
+                logging.warning(
+                    f"[burst] Unexpected error cancelling timeout: {e}"
+                )
             self._burst_timeout_task = asyncio.create_task(
                 self._burst_timeout()
             )
@@ -787,11 +822,12 @@ class QuinnEngine:
         underlying_price = (
             self.current_prices.get(symbol, 0.0)
         )
+        norm_direction = "call" if direction == "long" else "put"
 
         response = {
             "status":           "ok",
             "symbol":           symbol,
-            "direction":        direction,
+            "direction":        norm_direction,
             "strike":           best.strike,
             "expiry":           best.expiry,
             "right":            best.right,
@@ -805,10 +841,10 @@ class QuinnEngine:
         }
 
         logging.info(
-            f"Served execute: {symbol} {direction} → "
+            f"Served execute: {symbol} {norm_direction} -> "
             f"${best.strike:.2f} {best.expiry} "
-            f"δ={best.delta:.3f} Γ={best.gamma:.4f} "
-            f"Θ={best.theta:.4f} underlying=${underlying_price:.2f}"
+            f"delta={best.delta:.3f} gamma={best.gamma:.4f} "
+            f"theta={best.theta:.4f} underlying=${underlying_price:.2f}"
         )
 
         try:
@@ -851,11 +887,12 @@ class QuinnEngine:
             rankings.stock_price
             or self.current_prices.get(symbol, 0.0)
         )
+        norm_direction = "call" if direction == "long" else "put"
 
         response = {
             "status":           "ok",
             "symbol":           symbol,
-            "direction":        direction,
+            "direction":        norm_direction,
             "strike":           best.strike,
             "expiry":           best.expiry,
             "right":            best.right,
@@ -869,7 +906,7 @@ class QuinnEngine:
         }
 
         logging.info(
-            f"Served recommend: {symbol} {direction} → "
+            f"Served recommend: {symbol} {norm_direction} -> "
             f"${best.strike:.2f} {best.expiry}"
         )
 
@@ -922,7 +959,7 @@ def setup_logging(log_dir: Path, process_name: str = "quinn") -> None:
     log_dir = Path(log_dir) / process_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     log_path = log_dir / f"{process_name}_{timestamp}.log"
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
