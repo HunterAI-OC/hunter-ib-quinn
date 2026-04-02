@@ -82,6 +82,7 @@ class OptionContract:
     strike:    float
     expiry:    str        # "YYYYMMDD"
     right:     str        # "CALL" or "PUT"
+    conId:     str        # IBKR contract ID (from bridge chain response)
     delta:     float
     gamma:     float
     theta:     float
@@ -356,6 +357,7 @@ class QuinnEngine:
                     strike=float(opt_data.get("strike", 0)),
                     expiry=str(opt_data.get("expiry", "")),
                     right=self._normalize_right(right_raw),
+                    conId=str(opt_data.get("conId", "")),
                     delta=float(opt_data.get("delta", 0.5)),
                     gamma=float(opt_data.get("gamma", 0)),
                     theta=float(opt_data.get("theta", 0)),
@@ -831,6 +833,7 @@ class QuinnEngine:
             "strike":           best.strike,
             "expiry":           best.expiry,
             "right":            best.right,
+            "conId":            best.conId,
             "delta":            best.delta,
             "gamma":            best.gamma,
             "theta":            best.theta,
@@ -896,6 +899,7 @@ class QuinnEngine:
             "strike":           best.strike,
             "expiry":           best.expiry,
             "right":            best.right,
+            "conId":            best.conId,
             "delta":            best.delta,
             "gamma":            best.gamma,
             "theta":            best.theta,
