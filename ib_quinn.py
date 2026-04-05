@@ -21,7 +21,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import signal
 import sys
 import time
@@ -125,7 +124,6 @@ class QuinnEngine:
         rep_port: int,
         log_dir: Path,
         rep_host: str = "127.0.0.1",
-        refresh_interval: int = 60,  # kept for backwards compatibility (unused in burst mode)
     ):
         self.ctx        = ctx
         self.zmq_host   = zmq_host    # bridge connection host
@@ -342,9 +340,9 @@ class QuinnEngine:
                 logging.error(f"Failed to fetch chain for {symbol}: {e}")
                 return []
 
-        if response.get("status") != "ok":
+        if response.get("error"):
             logging.warning(
-                f"Chain request failed for {symbol}: {response}"
+                f"Chain request failed for {symbol}: {response.get('error')}"
             )
             return []
 
@@ -474,6 +472,10 @@ class QuinnEngine:
             if direction == "long" and c.right != "CALL":
                 continue
             if direction == "short" and c.right != "PUT":
+                continue
+
+            # None delta — can't score, filter out
+            if c.delta is None:
                 continue
 
             # DTE filter
