@@ -1004,18 +1004,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log-dir", default="C:/hunter/algo/logs", dest="log_dir"
     )
+    parser.add_argument(
+        "--paper", action="store_true",
+        help="Use paper trading ports (bridge ports +1000)"
+    )
     return parser.parse_args()
 
 
 async def main_async(args: argparse.Namespace) -> None:
     setup_logging(Path(args.log_dir))
 
+    # Paper mode shifts bridge-facing ports by +1000
+    tick_port  = args.tick_port  + 1000 if args.paper else args.tick_port
+    chain_port = args.chain_port + 1000 if args.paper else args.chain_port
+
     ctx = zmq.asyncio.Context()
     engine = QuinnEngine(
         ctx=ctx,
         zmq_host=args.zmq_host,
-        tick_port=args.tick_port,
-        chain_port=args.chain_port,
+        tick_port=tick_port,
+        chain_port=chain_port,
         rep_port=args.rep_port,
         rep_host=getattr(args, "rep_host", "127.0.0.1"),
         log_dir=Path(args.log_dir),
