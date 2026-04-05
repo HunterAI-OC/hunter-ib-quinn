@@ -346,6 +346,10 @@ class QuinnEngine:
                 logging.error(f"Failed to fetch chain for {symbol}: {e}")
                 return []
 
+        if not isinstance(response, dict):
+            logging.warning(f"Invalid chain response for {symbol}: {response}")
+            return []
+
         if response.get("error"):
             logging.warning(
                 f"Chain request failed for {symbol}: {response.get('error')}"

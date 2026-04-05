@@ -154,6 +154,7 @@ class OptionContract:
     strike:      float
     expiry:      str   # "YYYYMMDD"
     right:       str   # "CALL" or "PUT"
+    conId:       int   # IBKR contract ID (required for order placement)
     delta:       float
     gamma:       float
     theta:       float
@@ -183,6 +184,7 @@ class Rankings:
 | 5555 | SUB | Bridge → Quinn | Stock tick data |
 | 5556 | REQ | Quinn → Bridge | Option chain requests |
 | 5560 | REQ/REP | Algo → Quinn | Contract recommendations |
+| 5571 | SUB | Bridge → Quinn | Live Greeks streaming (optional, during burst) |
 
 ---
 
@@ -351,12 +353,14 @@ For Quinn to rank by Greek profile, the bridge must deliver Greeks on port 5556.
       "strike": 248,
       "expiry": "20260330",
       "right": "CALL",
+      "conId": 123456789,
       "delta": 0.52,
       "gamma": 0.04,
       "theta": -0.08,
       "iv": 0.32,
       "bid": 2.15,
       "ask": 2.20,
+      "underlying": 248.97,
       "oi": 5000,
       "volume": 3000
     }
@@ -364,7 +368,11 @@ For Quinn to rank by Greek profile, the bridge must deliver Greeks on port 5556.
 }
 ```
 
-### 13.2 Quinn's Role
+### 13.2 Greeks PUB — Port 5571 (optional)
+
+Bridge streams live Greek updates via 5571 PUB. Quinn can subscribe during burst mode instead of re-fetching chains every 1s. Message format matches the contract object above.
+
+### 13.3 Quinn's Role
 
 - Receive contracts array with Greek values from bridge
 - Hook delta/gamma/theta into the scoring algorithm
