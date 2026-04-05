@@ -1000,11 +1000,8 @@ def setup_logging(log_dir: Path, process_name: str = "quinn") -> None:
     root.addHandler(console)
 
     logging.info(f"Logging to {log_path}")
+    return log_path
 
-
-# ============================================================================
-# MAIN
-# ============================================================================
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -1081,6 +1078,24 @@ def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     logging.info("ib-quinn starting — Options Intelligence Layer (burst mode)")
+
+    # Paper mode: only tick SUB shifts +1000; chain REQ stays at default 5556
+    tick_port  = args.tick_port  + 1000 if args.paper else args.tick_port
+    chain_port = args.chain_port  # never shifts
+
+    log, log_path = setup_logging(Path(args.log_dir), "quinn")
+
+    # Launch banner
+    mode = "PAPER" if args.paper else "LIVE"
+    print("=" * 60, flush=True)
+    print("IBKR Quinn Options Handler", flush=True)
+    print("-" * 60, flush=True)
+    print(f"ZMQ Host:  {args.zmq_host}", flush=True)
+    print(f"Tick SUB:  {tick_port}  |  Chain REQ:  {chain_port}  |  REP:  {args.rep_port}", flush=True)
+    print(f"Mode:      {mode}", flush=True)
+    print(f"Log:       {log_path}", flush=True)
+    print("=" * 60, flush=True)
+
     asyncio.run(main_async(args))
 
 
