@@ -501,10 +501,6 @@ class QuinnEngine:
             if not self._spread_cost_acceptable(c, stock_price):
                 continue
 
-            # Delta must be known — None means IBKR hasn't computed Greeks yet
-            if c.delta is None:
-                continue
-
             filtered.append(c)
 
         # Score each contract
