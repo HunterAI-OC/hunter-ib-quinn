@@ -49,7 +49,7 @@ def main():
         print("\n=== TEST 1: recommend (IDLE mode) ===")
         resp = send_command(sock, "recommend", "AAPL", "long")
         if resp.get("status") == "error":
-            print(f"  → Expected error (no cached rankings): {resp.get('reason')}")
+            print(f"  → Expected error (no cached rankings): {resp.get('message')}")
 
         # Test 2: activate (enter BURST)
         print("\n=== TEST 2: activate (enter BURST) ===")
@@ -57,7 +57,7 @@ def main():
         if resp.get("status") == "ok":
             print(f"  → Quinn entered BURST mode")
         elif resp.get("status") == "error":
-            print(f"  → Bridge may not have chain data: {resp.get('reason')}")
+            print(f"  → Bridge may not have chain data: {resp.get('message')}")
 
         # Brief pause — burst loop fetches once on activate
         time.sleep(2)
@@ -70,7 +70,7 @@ def main():
             print(f"     strike={resp.get('strike')} expiry={resp.get('expiry')} "
                   f"right={resp.get('right')} delta={resp.get('delta')}")
         elif resp.get("status") == "error":
-            print(f"  → No cached contract: {resp.get('reason')}")
+            print(f"  → No cached contract: {resp.get('message')}")
 
         # Test 4: deactivate (return to IDLE)
         print("\n=== TEST 4: deactivate (return to IDLE) ===")
@@ -78,13 +78,13 @@ def main():
         if resp.get("status") == "ok":
             print(f"  → Quinn returned to IDLE")
         elif resp.get("status") == "error":
-            print(f"  → {resp.get('reason')}")
+            print(f"  → {resp.get('message')}")
 
         # Test 5: short direction
         print("\n=== TEST 5: recommend short (IDLE) ===")
         resp = send_command(sock, "recommend", "SPY", "short")
         if resp.get("status") == "error":
-            print(f"  → Expected error: {resp.get('reason')}")
+            print(f"  → Expected error: {resp.get('message')}")
 
     finally:
         sock.close()
