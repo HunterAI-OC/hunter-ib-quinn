@@ -362,7 +362,7 @@ class QuinnEngine:
                     expiry=str(opt_data.get("expiry", "")),
                     right=self._normalize_right(right_raw),
                     conId=str(opt_data.get("conId", "")),
-                    delta=float(opt_data.get("delta", 0.5)),
+                    delta=float(opt_data["delta"]) if opt_data.get("delta") is not None else None,
                     gamma=float(opt_data.get("gamma", 0)),
                     theta=float(opt_data.get("theta", 0)),
                     iv=float(opt_data.get("iv", 30)),
