@@ -657,6 +657,11 @@ class QuinnEngine:
                 msg = await self.tick_sub.recv_string()
             except asyncio.CancelledError:
                 break
+            except zmq.ZMQError as e:
+                if e.errno == zmq.EAGAIN:
+                    continue  # timeout, no data yet
+                logging.warning(f"recv_string error: {e}")
+                continue
             except Exception as e:
                 logging.warning(f"recv_string error: {e}")
                 continue
@@ -1067,6 +1072,8 @@ async def main_async(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     logging.info("ib-quinn starting — Options Intelligence Layer (burst mode)")
     asyncio.run(main_async(args))
 
