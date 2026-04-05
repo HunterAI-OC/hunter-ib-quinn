@@ -1017,7 +1017,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--paper", action="store_true",
-        help="Use paper trading ports (bridge ports +1000)"
+        help="Use paper trading: tick SUB shifts +1000, chain REQ stays 5556"
     )
     return parser.parse_args()
 
@@ -1025,9 +1025,9 @@ def parse_args() -> argparse.Namespace:
 async def main_async(args: argparse.Namespace) -> None:
     setup_logging(Path(args.log_dir))
 
-    # Paper mode shifts bridge-facing ports by +1000
+    # Paper mode: only tick SUB shifts +1000; chain REQ stays at default 5556
     tick_port  = args.tick_port  + 1000 if args.paper else args.tick_port
-    chain_port = args.chain_port + 1000 if args.paper else args.chain_port
+    chain_port = args.chain_port  # never shifts
 
     ctx = zmq.asyncio.Context()
     engine = QuinnEngine(
