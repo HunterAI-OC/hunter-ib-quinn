@@ -336,6 +336,12 @@ class QuinnEngine:
                 self._close_options_req()
                 self._create_options_req()
                 return []
+            except zmq.ZMQError as e:
+                if e.errno == zmq.EAGAIN:
+                    # Bridge timed out (market closed or no data) — treat as empty
+                    return []
+                logging.error(f"Failed to fetch chain for {symbol}: {e}")
+                return []
             except Exception as e:
                 logging.error(f"Failed to fetch chain for {symbol}: {e}")
                 return []

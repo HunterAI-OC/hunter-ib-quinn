@@ -38,7 +38,7 @@ def main():
 
     ctx = zmq.Context()
     sock = ctx.socket(zmq.REQ)
-    sock.setsockopt(zmq.RCVTIMEO, 5000)
+    sock.setsockopt(zmq.RCVTIMEO, 15000)
     sock.setsockopt(zmq.LINGER, 1000)
     sock.connect(f"tcp://{args.host}:{args.port}")
 
