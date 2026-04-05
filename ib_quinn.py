@@ -1000,7 +1000,6 @@ def setup_logging(log_dir: Path, process_name: str = "quinn") -> None:
     root.addHandler(console)
 
     logging.info(f"Logging to {log_path}")
-    return log_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -1083,7 +1082,13 @@ def main() -> None:
     tick_port  = args.tick_port  + 1000 if args.paper else args.tick_port
     chain_port = args.chain_port  # never shifts
 
-    log, log_path = setup_logging(Path(args.log_dir), "quinn")
+    # Compute log path for banner (same timestamp logic as setup_logging)
+    log_dir = Path(args.log_dir) / "quinn"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    log_path = log_dir / f"quinn_{timestamp}.log"
+
+    setup_logging(Path(args.log_dir), "quinn")
 
     # Launch banner
     mode = "PAPER" if args.paper else "LIVE"
